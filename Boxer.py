@@ -8,10 +8,10 @@ import traceback
 import math
 
 # TODO:
-# - Make the in/out radiobox work
 # - Build only 3 sides, and mirror?
 # - Make the finger-joint edge into a standalone command.
 # - Add finger control
+# - Temporarily display the origin when the command window is taking input.
 
 # Global list to keep all event handlers in scope.
 handlers = []
@@ -29,8 +29,10 @@ def run(context):
         cmdDefs = ui.commandDefinitions
         buttonBoxer = cmdDefs.addButtonDefinition(
             'BoxerButtonDefId',
-            'Boxer',
-            'Create a parameterized 3D box',
+            'Create Finger-jointed box',
+            ("Insert a finger-jointed box into the design. The box will be "
+             "inserted as a new component. These boxes can be cut with a laser "
+             "cutter or similar tool."),
             './Resources')
 
         buttonCreated = BoxerCommandCreatedHandler()
@@ -90,8 +92,9 @@ class BoxerCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             plane.addSelectionFilter('Profiles')
 
             lid = inputs.addBoolValueInput('lid', 'Add a lid', True)
-            lid.tooltip = """If this option is selected, a lid will be generated
-for the box. The lid will be finger-jointed to the sides it touches."""
+            lid.tooltip = ("If this option is selected, a lid will be generated "
+                           "for the box. The lid will be finger-jointed to the "
+                           "sides it touches.")
 
             length = inputs.addValueInput(
                 'baseLength', 'Box length', lenUnit, adsk.core.ValueInput.createByReal(0))
@@ -181,6 +184,7 @@ class BoxerCommandExecuteHandler(adsk.core.CommandEventHandler):
             # Create the box as a new component
             root = des.rootComponent
             transform = adsk.core.Matrix3D.create()
+            markerStart = des.timeline.markerPosition
             boxComponent = root.occurrences.addNewComponent(transform)
             sk = boxComponent.component.sketches.add(plane)
             extrudes = boxComponent.component.features.extrudeFeatures
@@ -373,12 +377,19 @@ def fingerJointEdge(component: adsk.fusion.Component,
     extrudes.add(inp)
 
 
-def calcFingers(edgeX, edgeY):
+def calcFingers(edgeX: float, edgeY: float):
+    """Calculate fingers for an edge. This routine will generate fingers about
+    8* longer than the material thickness, and will always generate an odd 
+    number of fingers (just because I think that looks better). The fingers will
+    be centered on the edge being jointed. This routine will generate fingers
+    along whichever of the two edges passed into it is longer - the shorter edge
+    will be used as the material thickness."""
     if edgeX > edgeY:
         edgeLen, thickness = edgeX, edgeY
     else:
         edgeLen, thickness = edgeY, edgeX
 
+    # This point generating routine figures out which dimension is which.
     def point(x, y):
         if edgeX > edgeY:
             return adsk.core.Point3D.create(y, x, 0)
@@ -426,6 +437,12 @@ def findContainedProfiles(lines):
 
 
 def findContainedProfilesBBox(sketch, bbox):
+    """Find the profiles contained within a bouding box. This routine works by
+    iterating through all the profiles in the sketch, and checking if the
+    bounding box for the profile is contained within the bounding box passed in
+    to this routine. Because bounding boxes in practice are often slightly 
+    larger than the geometry they contain, this routine first shrinks the bbox 
+    it's checking slightly. This is a hack, but has worked so far."""
     prs = sketch.profiles
 
     rProfiles = adsk.core.ObjectCollection.create()
@@ -449,17 +466,3 @@ def findContainedProfilesBBox(sketch, bbox):
             continue
 
     return rProfiles
-
-
-def bboxContains(bbox, containedBox):
-    lowVec = adsk.core.Vector3D.create(
-        app.pointTolerance, app.pointTolerance, app.pointTolerance)
-    highVec = adsk.core.Vector3D.create(-app.pointTolerance,
-                                        -app.pointTolerance,
-                                        -app.pointTolerance)
-    minP = containedBox.minPoint.copy()
-    minP.translateBy(lowVec)
-    maxP = containedBox.maxPoint.copy()
-    maxP.translateBy(highVec)
-
-    return bbox.contains(minP) and bbox.contains(maxP)
