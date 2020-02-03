@@ -8,9 +8,7 @@ import traceback
 import math
 
 # TODO:
-# - Build only 3 sides, and mirror?
 # - Make the finger-joint edge into a standalone command.
-# - Add finger control
 # - Temporarily display the origin when the command window is taking input.
 
 # Global list to keep all event handlers in scope.
@@ -90,7 +88,6 @@ class BoxerCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             # Command inputs
             inputs = cmd.commandInputs
 
-            # TODO: Add tooltips
             # TODO: Turn on the lightbulb for the origin?
             plane = inputs.addSelectionInput(
                 'plane', 'Plane', 'select plane, planar face, or sketch profile for the base')
@@ -105,12 +102,15 @@ class BoxerCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
 
             length = inputs.addValueInput(
                 'baseLength', 'Box length', lenUnit, adsk.core.ValueInput.createByReal(0))
+            length.tooltip = ("Enter the length of the box along the X-axis")
 
             width = inputs.addValueInput(
                 'baseWidth', 'Box width', lenUnit, adsk.core.ValueInput.createByReal(0))
+            width.tooltip = ("Enter the width of the box along the Y-axis")
 
             height = inputs.addValueInput(
                 'height', 'Box Height', lenUnit, adsk.core.ValueInput.createByReal(0))
+            height.tooltip = ("Enter the height of the box along the Z-axis")
 
             radioInOutGroup = inputs.addRadioButtonGroupCommandInput(
                 'dimsInOut', 'Dimensions are')
@@ -120,6 +120,19 @@ class BoxerCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
 
             thickness = inputs.addValueInput(
                 'thickness', 'Material thickness', lenUnit, adsk.core.ValueInput.createByReal(0))
+            thickness.tooltip = ("Enter the exact thickness of the material here. "
+                                 "The same thickness is used for all sides of the "
+                                 "box.")
+            fingerScale = inputs.addIntegerSliderCommandInput(
+                'fingerScale', 'Finger scale', 1, 20)
+            fingerScale.valueOne = 5
+            fingerScale.tooltip = ("The desired finger size is a multiple of the "
+                                   "material thickness. The exact size of the "
+                                   "fingers will be adjusted before drawing so "
+                                   "that there are at least 3 fingers per side.")
+
+            showPreview = inputs.addBoolValueInput(
+                'preview', 'Show preview', True)
 
             # Connect to the validate inputs event
             onValidate = BoxerCommandValidateHandler()
@@ -204,6 +217,9 @@ class BoxerCommandPreviewHandler(adsk.core.CommandEventHandler):
             eventArgs = adsk.core.CommandEventArgs.cast(args)
             inp = eventArgs.command.commandInputs
             inputs = getInputs(inp)
+            if not inputs.preview:
+                # previews are disabled, nothing to do.
+                return
             drawBox(inputs)
             eventArgs.isValidResult = True
 
@@ -240,26 +256,21 @@ def getInputs(inputs, writeBack=False):
     validate handler passes 'writeBack=True' to this routine, which causes it to
     write the value back to the control right after reading it.
     """
-    plane = inputs.itemById('plane').selection(0).entity
-    drawLid = inputs.itemById('lid').value
-    length = readInputValue(inputs.itemById('baseLength'), writeBack)
-    width = readInputValue(inputs.itemById('baseWidth'), writeBack)
-    height = readInputValue(inputs.itemById('height'), writeBack)
-    thickness = readInputValue(inputs.itemById('thickness'), writeBack)
+    inp = boxerInputs()
 
-    dimsOuter = inputs.itemById(
+    inp.plane = inputs.itemById('plane').selection(0).entity
+    inp.drawLid = inputs.itemById('lid').value
+    inp.length = readInputValue(inputs.itemById('baseLength'), writeBack)
+    inp.width = readInputValue(inputs.itemById('baseWidth'), writeBack)
+    inp.height = readInputValue(inputs.itemById('height'), writeBack)
+    inp.thickness = readInputValue(inputs.itemById('thickness'), writeBack)
+    inp.fingerScale = inputs.itemById('fingerScale').valueOne
+    inp.preview = inputs.itemById('preview').value
+
+    inp.dimsOuter = inputs.itemById(
         'dimsInOut').selectedItem.name == "outer"
 
-    res = boxerInputs()
-    res.plane = plane
-    res.drawLid = drawLid
-    res.length = length
-    res.width = width
-    res.height = height
-    res.thickness = thickness
-    res.dimsOuter = dimsOuter
-
-    return res
+    return inp
 
 
 def readInputValue(item, writeBack=False):
@@ -274,7 +285,8 @@ def readInputValue(item, writeBack=False):
 
 
 def drawBox(inputs):
-
+    """drawBox creates the finger-jointed box.
+    """
     app = adsk.core.Application.get()
     ui = app.userInterface
     des = adsk.fusion.Design.cast(app.activeProduct)
@@ -284,6 +296,7 @@ def drawBox(inputs):
     height = inputs.height
     thickness = inputs.thickness
     drawLid = inputs.drawLid
+    fingerScale = inputs.fingerScale
 
     # If the user gave us inner dimensions, adjust them so they're outer
     # dimensions.
@@ -310,11 +323,11 @@ def drawBox(inputs):
     base = lines.addTwoPointRectangle(p1, p2)
 
     # fingers for the y axis edges
-    fingers = fingersForY(calcFingers2D(width, thickness))
+    fingers = fingersForY(calcFingers2D(width, thickness, factor=fingerScale))
     sketchFingers(lines, fingers, length-thickness, 0)
 
     # fingers for the x axis edges
-    fingers = fingersForX(calcFingers2D(length, thickness))
+    fingers = fingersForX(calcFingers2D(length, thickness, factor=fingerScale))
     sketchFingers(lines, fingers, 0, width-thickness)
 
     newBody = adsk.fusion.FeatureOperations.NewBodyFeatureOperation
@@ -360,7 +373,7 @@ def drawBox(inputs):
     p1 = adsk.core.Point3D.create(thickness, 0, 0)
     p2 = adsk.core.Point3D.create(length-thickness, height, 0)
     lines.addTwoPointRectangle(p1, p2)
-    fingers = fingersForY(calcFingers2D(height, thickness))
+    fingers = fingersForY(calcFingers2D(height, thickness, factor=fingerScale))
     sketchFingers(lines, fingers, length-thickness, 0)
 
     # sketch the left/right sides
