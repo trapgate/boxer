@@ -4,9 +4,9 @@
 	"id":	"3754a9d0-0e5e-464e-93d3-724e8963e1e8",
 	"author":	"Geoff Hickey",
 	"description":	{
-		"":	"Creates boxes"
+		"":	"Creates finger-jointed boxes with optional lids. Boxes are created as a new component and each side as a body."
 	},
-	"version":	".1",
+	"version":	"1.0",
 	"runOnStartup":	false,
 	"supportedOS":	"windows|mac",
 	"editEnabled":	true

@@ -16,7 +16,6 @@ handlers = []
 
 app = None
 ui = None
-inputsValid = False
 
 
 # BoxerInputs is used to hold the parameters specified by the user for creating
@@ -34,7 +33,7 @@ def run(context):
         cmdDefs = ui.commandDefinitions
         buttonBoxer = cmdDefs.addButtonDefinition(
             'BoxerButtonDefId',
-            'Create Finger-jointed box',
+            'Finger-Jointed Box',
             ("Insert a finger-jointed box into the design. The box will be "
              "inserted as a new component. These boxes can be cut with a laser "
              "cutter or similar tool."),
@@ -88,12 +87,14 @@ class BoxerCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             # Command inputs
             inputs = cmd.commandInputs
 
-            # TODO: Turn on the lightbulb for the origin?
-            plane = inputs.addSelectionInput(
-                'plane', 'Plane', 'select plane, planar face, or sketch profile for the base')
-            plane.addSelectionFilter('PlanarFaces')
-            plane.addSelectionFilter('ConstructionPlanes')
-            plane.addSelectionFilter('Profiles')
+            # This control let the user specify a construction plane to build
+            # the box on, but that introduces some corner cases, and it's not
+            # obviously valuable, since the box can just be moved after it's
+            # built.
+            # plane = inputs.addSelectionInput(
+            #     'plane', 'Plane', 'select plane, planar face, or sketch profile for the base')
+            # plane.addSelectionFilter('PlanarFaces')
+            # plane.addSelectionFilter('ConstructionPlanes')
 
             lid = inputs.addBoolValueInput('lid', 'Add a lid', True)
             lid.tooltip = ("If this option is selected, a lid will be generated "
@@ -126,13 +127,13 @@ class BoxerCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             fingerScale = inputs.addIntegerSliderCommandInput(
                 'fingerScale', 'Finger scale', 1, 20)
             fingerScale.valueOne = 5
-            fingerScale.tooltip = ("The desired finger size is a multiple of the "
+            fingerScale.tooltip = ("The finger size is set as a multiple of the "
                                    "material thickness. The exact size of the "
                                    "fingers will be adjusted before drawing so "
                                    "that there are at least 3 fingers per side.")
 
-            showPreview = inputs.addBoolValueInput(
-                'preview', 'Show preview', True)
+            fingerInfo = inputs.addTextBoxCommandInput(
+                'fingerInfo', '', "", 2, True)
 
             # Connect to the validate inputs event
             onValidate = BoxerCommandValidateHandler()
@@ -150,9 +151,9 @@ class BoxerCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             handlers.append(onExecute)
 
             # Connect to the inputChanged event
-            # onInputChanged = BoxerCommandInputChangedHandler()
-            # cmd.inputChanged.add(onInputChanged)
-            # handlers.append(onInputChanged)
+            onInputChanged = BoxerCommandInputChangedHandler()
+            cmd.inputChanged.add(onInputChanged)
+            handlers.append(onInputChanged)
 
         except:
             ui.messageBox('Boxer failed:\n{}'.format(
@@ -167,20 +168,15 @@ class BoxerCommandValidateHandler(adsk.core.ValidateInputsEventHandler):
 
     def notify(self, args):
         try:
-            global inputsValid
             vArgs = adsk.core.ValidateInputsEventArgs.cast(args)
             inputs = getInputs(vArgs.inputs, writeBack=True)
-            vArgs.areInputsValid = False
             if inputs.plane is None:
-                return
+                vArgs.areInputsValid = False
             if inputs.thickness == 0:
-                return
+                vArgs.areInputsValid = False
             for dim in [inputs.length, inputs.width, inputs.height]:
                 if dim <= 2*inputs.thickness:
-                    return
-            inputsValid = True
-            vArgs.areInputsValid = True
-
+                    vArgs.areInputsValid = False
         except:
             ui.messageBox('Boxer failed:\n{}'.format(traceback.format_exc()))
 
@@ -193,12 +189,23 @@ class BoxerCommandInputChangedHandler(adsk.core.InputChangedEventHandler):
 
     def notify(self, args):
         try:
+            # If a thickness is set, calculate & display the approximate width
+            # of the fingers.
             eventArgs = adsk.core.InputChangedEventArgs.cast(args)
-            inputs = eventArgs.inputs
-            cmdInput = eventArgs.input
-
-            # does nothing yet
-
+            inp = eventArgs.inputs
+            inputs = getInputs(inp)
+            fingerInfo = inp.itemById('fingerInfo')
+            if inputs.thickness > 0:
+                des = adsk.fusion.Design.cast(app.activeProduct)
+                unitsMgr = des.unitsManager
+                target = unitsMgr.formatInternalValue(
+                    inputs.fingerScale * inputs.thickness,
+                    unitsMgr.defaultLengthUnits,
+                    True)
+                fingerInfo.formattedText = 'Fingers will be about {}'.format(
+                    target)
+            else:
+                fingerInfo.formattedText = ''
         except:
             ui.messageBox('Boxer failed:\n{}'.format(traceback.format_exc()))
 
@@ -211,18 +218,11 @@ class BoxerCommandPreviewHandler(adsk.core.CommandEventHandler):
 
     def notify(self, args):
         try:
-            global inputsValid
-            if not inputsValid:
-                return
             eventArgs = adsk.core.CommandEventArgs.cast(args)
             inp = eventArgs.command.commandInputs
             inputs = getInputs(inp)
-            if not inputs.preview:
-                # previews are disabled, nothing to do.
-                return
             drawBox(inputs)
             eventArgs.isValidResult = True
-
         except:
             ui.messageBox('Boxer preview failed:\n{}'.format(
                 traceback.format_exc()))
@@ -258,14 +258,18 @@ def getInputs(inputs, writeBack=False):
     """
     inp = boxerInputs()
 
-    inp.plane = inputs.itemById('plane').selection(0).entity
+    des = adsk.fusion.Design.cast(app.activeProduct)
+    plane = des.rootComponent.xZConstructionPlane
+    # The plane selection control is currently commented out, and all boxes are
+    # constructed on the root component's XZ plane.
+    inp.plane = plane
+    # inp.plane = inputs.itemById('plane').selection(0).entity
     inp.drawLid = inputs.itemById('lid').value
     inp.length = readInputValue(inputs.itemById('baseLength'), writeBack)
     inp.width = readInputValue(inputs.itemById('baseWidth'), writeBack)
     inp.height = readInputValue(inputs.itemById('height'), writeBack)
     inp.thickness = readInputValue(inputs.itemById('thickness'), writeBack)
     inp.fingerScale = inputs.itemById('fingerScale').valueOne
-    inp.preview = inputs.itemById('preview').value
 
     inp.dimsOuter = inputs.itemById(
         'dimsInOut').selectedItem.name == "outer"
@@ -310,7 +314,6 @@ def drawBox(inputs):
     # Create the box as a new component
     root = des.rootComponent
     transform = adsk.core.Matrix3D.create()
-    markerStart = des.timeline.markerPosition
     boxComponent = root.occurrences.addNewComponent(transform)
     sk = boxComponent.component.sketches.addWithoutEdges(inputs.plane)
     extrudes = boxComponent.component.features.extrudeFeatures
