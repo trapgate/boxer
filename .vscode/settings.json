@@ -1,5 +1,0 @@
-{
-	"python.autoComplete.extraPaths":	["C:/Users/geoff/AppData/Roaming/Autodesk/Autodesk Fusion 360/API/Python/defs"],
-	"python.pythonPath":	"C:/Users/geoff/AppData/Local/Autodesk/webdeploy/production/9eb6e3e95b2f4cf7bb2f804604f4040b86fc00dd/Python/python.exe",
-	"python.linting.pylintEnabled":	false
-}
